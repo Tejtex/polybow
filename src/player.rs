@@ -172,20 +172,20 @@ fn smooth_camera_follow(
 ) {
     if let Ok(player_transform) = player_query.single() {
         if let Ok(mut camera_transform) = camera_query.single_mut() {
-            // Współczynnik wygładzania
+            
             let smoothness = 5.0;
 
-            // Obecna pozycja kamery
+            
             let current = camera_transform.translation;
 
-            // Docelowa pozycja gracza (kamera zostaje na swoim Z)
+            
             let target = Vec3::new(
                 player_transform.translation.x,
                 player_transform.translation.y,
                 current.z,
             );
 
-            // Interpolacja liniowa
+            
             camera_transform.translation = current.lerp(target, time.delta_secs() * smoothness);
         }
     }

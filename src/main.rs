@@ -6,11 +6,11 @@ use bevy::core_pipeline::bloom::Bloom;
 use bevy_hanabi::HanabiPlugin;
 
 
-use crate::enemy::{EnemyPlugin, HealthBar, HealthBarOwner, HP};
-use crate::global::{CircleCollider, ENEMY_COLOR};
+use crate::enemy::EnemyPlugin;
+use crate::global::ENEMY_COLOR;
 use crate::player::spawn_player;
 use crate::world::WorldPlugin;
-use crate::{enemy::Enemy, global::GlobalPlugin, player::PlayerPlugin};
+use crate::{global::GlobalPlugin, player::PlayerPlugin};
 
 pub mod player;
 pub mod global;

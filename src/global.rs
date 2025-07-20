@@ -61,7 +61,7 @@ fn spawn_trail(
     const TRAIL_STEP: f32 = 0.005;
     *timer += time.delta_secs();
 
-    if let Ok((transform, mut prev_pos)) = player_query.get_single_mut() {
+    if let Ok((transform, mut prev_pos)) = player_query.single_mut() {
         let start = prev_pos.0;
         let end = transform.translation;
 
@@ -97,19 +97,19 @@ fn fade_trail(
     mut trail_query: Query<(Entity, &mut Trail, &mut Transform, &mut MeshMaterial2d<ColorMaterial>)>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    for (entity, mut trail, mut transform, mut material_handle) in &mut trail_query {
+    for (entity, mut trail, mut transform, material_handle) in &mut trail_query {
         trail.lifetime -= time.delta_secs();
 
-        let lifetime_ratio = trail.lifetime / 0.2; // 0.5 = total lifetime
+        let lifetime_ratio = trail.lifetime / 0.2; 
 
-        // Logarytmiczne zmniejszanie (przesunięte, by nie waliło NaN):
-        let scale_factor = (lifetime_ratio.ln_1p()).max(0.01); // ln(1 + x), x ∈ (0,1)
+        
+        let scale_factor = (lifetime_ratio.ln_1p()).max(0.01); 
 
         transform.scale = Vec3::splat(scale_factor);
 
-        // Zanikanie alpha (opcjonalnie)
+        
         if let Some(material) = materials.get_mut(&material_handle.0) {
-            material.color.set_alpha(scale_factor * 0.5); // przezroczystość = skala
+            material.color.set_alpha(scale_factor * 0.5); 
         }
 
         if trail.lifetime <= 0.0 {

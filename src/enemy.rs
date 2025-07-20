@@ -29,7 +29,7 @@ pub struct EnemyPlugin;
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_systems(Update, (update_health_bars, update_health_bar_position, handle_enemy_damage, handle_AI));
+            .add_systems(Update, (update_health_bars, update_health_bar_position, handle_enemy_damage, handle_ai));
     }
 }
 
@@ -93,8 +93,8 @@ fn handle_enemy_damage(
     }
 }
 
-fn handle_AI(
-    mut enemy_query: Query<(& Transform, &mut Velocity, &Enemy), Without<Player>>,
+fn handle_ai(
+    enemy_query: Query<(& Transform, &mut Velocity, &Enemy), Without<Player>>,
     player_query: Query<(&Transform, &Velocity), (With<Player>, Without<Enemy>)>
 ) {
     let player  = player_query.single().unwrap();
@@ -135,7 +135,7 @@ fn calculate_intercept_direction(
     let discriminant = b * b - 4.0 * a * c;
 
     if discriminant < 0.0 {
-        // Nie da się trafić (za szybki cel)
+        
         return None;
     }
 
@@ -148,7 +148,7 @@ fn calculate_intercept_direction(
     } else if t2 > 0.0 {
         t2
     } else {
-        return None; // Oba ujemne = nie da się
+        return None; 
     };
 
     let aim_point = target_pos + target_vel * t;
