@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bevy::{color::palettes::css::{DARK_GRAY, RED}, prelude::*, text::*};
+use bevy::{color::palettes::css::{DARK_GRAY, RED}, prelude::*};
 
 use crate::{global::{CircleCollider, Velocity, PLAYER_COLOR}, GLOW_FACTOR};
 

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 
-use crate::{global::{CircleCollider, Velocity}, player::{self, Arrow, LastDamageTime, Player, PlayerHealth}, world::EnemiesCounter};
+use crate::{global::{CircleCollider, Velocity}, player::{Arrow, LastDamageTime, Player, PlayerHealth}, world::EnemiesCounter};
 
 
 const ENEMY_SPEED: f32 = 1.0;
