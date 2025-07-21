@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 
-use crate::{global::{CircleCollider, Velocity}, player::{self, Arrow, Player, PlayerHealth}, world::EnemiesCounter};
+use crate::{global::{CircleCollider, Velocity}, player::{self, Arrow, LastDamageTime, Player, PlayerHealth}, world::EnemiesCounter};
 
 
 const ENEMY_SPEED: f32 = 1.0;
@@ -162,14 +162,16 @@ fn handle_collision(
     enemy_query: Query<(&CircleCollider, &Transform, &Enemy, Entity)>,
     health_bar_query: Query<(Entity, &HealthBarOwner), With<HealthBar>>,
     mut commands: Commands,
-    mut counter: ResMut<EnemiesCounter>
+    mut counter: ResMut<EnemiesCounter>,
+    mut last_damage: ResMut<LastDamageTime>,
+    time: Res<Time>
 ) {
     let (mut health, player_collider, player_tr) = player_query.single_mut().unwrap();
     for (enemy_collider, enemy_tr, enemy, entity) in enemy_query {
         if enemy_tr.translation.truncate().distance(player_tr.translation.truncate()) < enemy_collider.0 + player_collider.0 {
             match enemy.sides {
                 3..=4 => {
-                    health.current -= ENEMY_DAMAGE;
+                    health.current -= ENEMY_DAMAGE as f32;
                     commands.entity(entity).despawn();
                     for (health_bar_ent, owner) in health_bar_query {
                         if owner.0 == entity {
@@ -177,6 +179,7 @@ fn handle_collision(
                         }
                     }
                     counter.0 -= 1;
+                    last_damage.0 = time.elapsed_secs();
                 }
                 _ => ()
             }

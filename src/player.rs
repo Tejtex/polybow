@@ -10,6 +10,8 @@ const FRICTION: f32 = 0.5;
 const BOW_OFFSET: f32 = 55.0;
 const ARROW_SPEED: f32 = 10.0;
 const ARROW_COOLDOWN: f32 = 0.5;
+const REGENERATE_SPEED: f32 = 1.0;
+const REGENERATE_COOLDOWN: f32 = 3.0;
 
 #[derive(Component)]
 #[require(Velocity, Mesh2d, MeshMaterial2d<ColorMaterial>)]
@@ -26,7 +28,7 @@ pub struct PreviousPosition(pub Vec3);
 
 #[derive(Component)]
 pub struct PlayerHealth {
-    pub current: i32,
+    pub current: f32,
     per_segment: i32,
     num_segments: i32
 }
@@ -39,12 +41,16 @@ pub struct HealthBarSegment {
 #[derive(Component)]
 pub struct PlayerHealthBar;
 
+#[derive(Resource)]
+pub struct LastDamageTime(pub f32);
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_systems(Update, (handle_keys, apply_friction, update_bow_position, handle_mouse, smooth_camera_follow, update_health_bar_ui));
+            .add_systems(Update, (handle_keys, apply_friction, update_bow_position, handle_mouse, smooth_camera_follow, update_health_bar_ui, regenerate_healthbar))
+            .insert_resource(LastDamageTime(0.0));
     }
 }
 
@@ -94,7 +100,7 @@ pub fn spawn_player(
         MeshMaterial2d(materials.add(ColorMaterial::from_color(PLAYER_COLOR))),
         PreviousPosition(Vec3::ZERO),
         PlayerHealth {
-            current: 36,
+            current: 36.0,
             per_segment: 10,
             num_segments: 4
         },
@@ -160,11 +166,12 @@ fn update_health_bar_ui(
 
     let player = player_query.single().unwrap();
 
-    let current_segment = f32::floor(player.current as f32 / player.per_segment as f32) as i32;
+    let current_segment = f32::floor(player.current / player.per_segment as f32) as i32;
 
     for i in 0..player.num_segments {
-        let (_, mut color) = nodes_query.get_mut(segments_map.get(&(i as usize)).unwrap().clone()).unwrap();
+        let (mut node, mut color) = nodes_query.get_mut(segments_map.get(&(i as usize)).unwrap().clone()).unwrap();
         color.0 = Color::Srgba(DARK_GRAY);
+        node.width = Val::Px(100.0);
     }
 
     for i in 0..(current_segment) {
@@ -180,8 +187,20 @@ fn update_health_bar_ui(
 
     let (mut last_node, mut last_color) = nodes_query.get_mut(segments_map.get(&((current_segment) as usize)).unwrap().clone()).unwrap();
 
-    last_node.width = Val::Px(100.0 * ((player.current as f32 - current_segment as f32 * player.per_segment as f32) / player.per_segment as f32));
+    last_node.width = Val::Px(100.0 * ((player.current - current_segment as f32 * player.per_segment as f32) / player.per_segment as f32));
     last_color.0 = Color::Srgba(RED);
+}
+
+fn regenerate_healthbar(
+    last_damage: Res<LastDamageTime>,
+    time: Res<Time>,
+    mut health_query: Query<&mut PlayerHealth>
+) {
+    let mut health = health_query.single_mut().unwrap();
+    if last_damage.0 + REGENERATE_COOLDOWN < time.elapsed_secs() && health.current + time.delta_secs() * REGENERATE_SPEED < (health.num_segments * health.per_segment) as f32 {
+        health.current += time.delta_secs() * REGENERATE_SPEED;
+    }
+
 }
 
 fn update_bow_position(
