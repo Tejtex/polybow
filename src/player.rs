@@ -1,6 +1,8 @@
-use bevy::prelude::*;
+use std::collections::HashMap;
 
-use crate::{global::{Velocity, PLAYER_COLOR}, GLOW_FACTOR};
+use bevy::{color::palettes::css::{DARK_GRAY, RED}, prelude::*, text::*};
+
+use crate::{global::{CircleCollider, Velocity, PLAYER_COLOR}, GLOW_FACTOR};
 
 
 const PLAYER_SPEED: f32 = 10.0;
@@ -22,14 +24,27 @@ pub struct Arrow;
 #[derive(Component, Default, Copy, Clone)]
 pub struct PreviousPosition(pub Vec3);
 
+#[derive(Component)]
+pub struct PlayerHealth {
+    pub current: i32,
+    per_segment: i32,
+    num_segments: i32
+}
 
+#[derive(Component)]
+pub struct HealthBarSegment {
+    pub index: usize
+}
+
+#[derive(Component)]
+pub struct PlayerHealthBar;
 
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_systems(Update, (handle_keys, apply_friction, update_bow_position, handle_mouse, smooth_camera_follow));
+            .add_systems(Update, (handle_keys, apply_friction, update_bow_position, handle_mouse, smooth_camera_follow, update_health_bar_ui));
     }
 }
 
@@ -77,7 +92,13 @@ pub fn spawn_player(
         Player,
         Mesh2d(meshes.add(RegularPolygon::new(30.0,3))),
         MeshMaterial2d(materials.add(ColorMaterial::from_color(PLAYER_COLOR))),
-        PreviousPosition(Vec3::ZERO)
+        PreviousPosition(Vec3::ZERO),
+        PlayerHealth {
+            current: 36,
+            per_segment: 10,
+            num_segments: 4
+        },
+        CircleCollider(30.0)
     ));
 
     commands.spawn((
@@ -89,6 +110,78 @@ pub fn spawn_player(
         },
         Transform::from_scale(Vec3::new(0.5, 0.5, 0.5))
     ));
+
+    commands.spawn((
+        Node {
+            width: Val::Percent(100.0), 
+            height: Val::Px(30.0),
+            position_type: PositionType::Absolute,
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            bottom: Val::Px(15.0),
+            left: Val::Px(15.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+        PlayerHealthBar
+    ))
+    .with_children(|parent| {
+        // tworzymy 4 segmenty
+        for i in 0..4 {
+            parent.spawn((
+                Node {
+                    width: Val::Px(100.0),
+                    height: Val::Px(30.0),
+                    margin: UiRect {
+                        right: Val::Px(15.0),
+                        ..default()
+                    },
+                    ..default()
+                },
+                // domyślny kolor (pusty)
+                BackgroundColor(Color::Srgba(DARK_GRAY)),
+                HealthBarSegment { index: i },
+            ));
+        }
+    });
+
+}
+
+fn update_health_bar_ui(
+    segments_query: Query<(&HealthBarSegment, Entity)>,
+    mut nodes_query: Query<(&mut Node, &mut BackgroundColor), With<HealthBarSegment>>,
+    player_query: Query<&PlayerHealth>
+) {
+    let segments_map: HashMap<usize, Entity> = segments_query
+        .iter()
+        .map(|(segment, entity)| (segment.index, entity))
+        .collect();
+
+    let player = player_query.single().unwrap();
+
+    let current_segment = f32::floor(player.current as f32 / player.per_segment as f32) as i32;
+
+    for i in 0..player.num_segments {
+        let (_, mut color) = nodes_query.get_mut(segments_map.get(&(i as usize)).unwrap().clone()).unwrap();
+        color.0 = Color::Srgba(DARK_GRAY);
+    }
+
+    for i in 0..(current_segment) {
+        let (mut current_node, mut color) = nodes_query.get_mut(segments_map.get(&(i as usize)).unwrap().clone()).unwrap();
+
+        current_node.width = Val::Px(100.0);
+        color.0 = Color::Srgba(RED);
+    }
+
+    if current_segment == player.num_segments {
+        return;
+    }
+
+    let (mut last_node, mut last_color) = nodes_query.get_mut(segments_map.get(&((current_segment) as usize)).unwrap().clone()).unwrap();
+
+    last_node.width = Val::Px(100.0 * ((player.current as f32 - current_segment as f32 * player.per_segment as f32) / player.per_segment as f32));
+    last_color.0 = Color::Srgba(RED);
 }
 
 fn update_bow_position(

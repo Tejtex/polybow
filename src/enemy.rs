@@ -1,10 +1,11 @@
 use bevy::prelude::*;
 
 
-use crate::{global::{CircleCollider, Velocity}, player::{Arrow, Player}, world::EnemiesCounter};
+use crate::{global::{CircleCollider, Velocity}, player::{self, Arrow, Player, PlayerHealth}, world::EnemiesCounter};
 
 
 const ENEMY_SPEED: f32 = 1.0;
+const ENEMY_DAMAGE: i32 = 1;
 
 #[derive(Component)]
 #[require(Velocity, Mesh2d, MeshMaterial2d<ColorMaterial>, HP, CircleCollider)]
@@ -29,7 +30,7 @@ pub struct EnemyPlugin;
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_systems(Update, (update_health_bars, update_health_bar_position, handle_enemy_damage, handle_ai));
+            .add_systems(Update, (update_health_bars, update_health_bar_position, handle_enemy_damage, handle_ai, handle_collision));
     }
 }
 
@@ -154,4 +155,31 @@ fn calculate_intercept_direction(
     let aim_point = target_pos + target_vel * t;
     let direction = (aim_point - shooter_pos).normalize();
     Some(direction)
+}
+
+fn handle_collision(
+    mut player_query: Query<(&mut PlayerHealth, &CircleCollider, &Transform)>,
+    enemy_query: Query<(&CircleCollider, &Transform, &Enemy, Entity)>,
+    health_bar_query: Query<(Entity, &HealthBarOwner), With<HealthBar>>,
+    mut commands: Commands,
+    mut counter: ResMut<EnemiesCounter>
+) {
+    let (mut health, player_collider, player_tr) = player_query.single_mut().unwrap();
+    for (enemy_collider, enemy_tr, enemy, entity) in enemy_query {
+        if enemy_tr.translation.truncate().distance(player_tr.translation.truncate()) < enemy_collider.0 + player_collider.0 {
+            match enemy.sides {
+                3..=4 => {
+                    health.current -= ENEMY_DAMAGE;
+                    commands.entity(entity).despawn();
+                    for (health_bar_ent, owner) in health_bar_query {
+                        if owner.0 == entity {
+                            commands.entity(health_bar_ent).despawn();
+                        }
+                    }
+                    counter.0 -= 1;
+                }
+                _ => ()
+            }
+        }
+    }
 }
