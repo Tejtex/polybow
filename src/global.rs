@@ -1,10 +1,13 @@
 use std::f32::consts::PI;
 
 use bevy::prelude::*;
+use rand::Rng;
 
 use crate::{enemy::{Enemy, HealthBar}, player::{Player, PreviousPosition}, GLOW_FACTOR};
 
 const ROTATION_SPEED: f32 = 120.0;
+const TRAUMA_FALLOFF_SPEED: f32 = 6.0;
+
 pub(crate) const ENEMY_COLOR: Color = Color::linear_rgb(245.0 / 255.0 * GLOW_FACTOR, 59.0 / 255.0 * GLOW_FACTOR, 93.0 / 255.0 * GLOW_FACTOR);
 pub(crate) const PLAYER_COLOR: Color = Color::linear_rgb(5.0 / 255.0 * GLOW_FACTOR, 157.0 / 255.0 * GLOW_FACTOR, 240.0 / 255.0 * GLOW_FACTOR);
 
@@ -23,10 +26,22 @@ pub struct GlobalPlugin;
 impl Plugin for GlobalPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_systems(Update, (update_transform_system, rotate_player_enemy, fade_trail.after(spawn_trail),spawn_trail))
-            ;
+            .add_systems(Update, (update_transform_system, rotate_player_enemy, fade_trail.after(spawn_trail),spawn_trail, apply_screen_shake))
+            .insert_resource(ScreenShake::default());
     }
 }
+
+#[derive(Resource)]
+pub struct ScreenShake {
+    pub trauma: f32,
+}
+
+impl Default for ScreenShake {
+    fn default() -> Self {
+        ScreenShake { trauma: 0.0 }
+    }
+}
+
 fn update_transform_system(query: Query<(&Velocity, &mut Transform)>) {
     for (vel, mut pos) in query {
         pos.translation.x += vel.dx;
@@ -114,6 +129,33 @@ fn fade_trail(
 
         if trail.lifetime <= 0.0 {
             commands.entity(entity).despawn();
+        }
+    }
+}
+
+
+fn apply_screen_shake(
+    mut camera_query: Query<&mut Transform, With<Camera>>,
+    time: Res<Time>,
+    mut shake: ResMut<ScreenShake>,
+) {
+    shake.trauma = (shake.trauma - time.delta_secs() * TRAUMA_FALLOFF_SPEED).clamp(0.0, 1.0);
+    if shake.trauma > 0.0 {
+        let mut rng = rand::rng();
+        let intensity = f32::powf(shake.trauma, 2.5);
+
+        let offset_x = rng.random_range(-1.0..1.0) * 10.0 * intensity;
+        let offset_y = rng.random_range(-1.0..1.0) * 10.0 * intensity;
+
+        for mut transform in camera_query.iter_mut() {
+            transform.translation.x = offset_x;
+            transform.translation.y = offset_y;
+        }
+    } else {
+        // resetuj kamerę
+        for mut transform in camera_query.iter_mut() {
+            transform.translation.x = 0.0;
+            transform.translation.y = 0.0;
         }
     }
 }

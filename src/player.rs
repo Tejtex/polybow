@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use bevy::{color::palettes::css::{DARK_GRAY, RED}, prelude::*};
+use bevy::{color::palettes::css::{DARK_GRAY, RED, YELLOW}, prelude::*};
+use bevy_hanabi::ParticleEffect;
 
-use crate::{global::{CircleCollider, Velocity, PLAYER_COLOR}, GLOW_FACTOR};
+use crate::{global::{CircleCollider, Velocity, PLAYER_COLOR}, particles::ParticleHandles, GLOW_FACTOR};
 
 
 const PLAYER_SPEED: f32 = 10.0;
@@ -12,6 +13,7 @@ const ARROW_SPEED: f32 = 10.0;
 const ARROW_COOLDOWN: f32 = 0.5;
 const REGENERATE_SPEED: f32 = 1.0;
 const REGENERATE_COOLDOWN: f32 = 3.0;
+const G: f32 =50000.0;
 
 #[derive(Component)]
 #[require(Velocity, Mesh2d, MeshMaterial2d<ColorMaterial>)]
@@ -41,6 +43,15 @@ pub struct HealthBarSegment {
 #[derive(Component)]
 pub struct PlayerHealthBar;
 
+#[derive(Component)]
+pub struct XPBar {
+    level: i32,
+    current: f32
+}
+
+#[derive(Component)]
+pub struct XPOrb(pub f32);
+
 #[derive(Resource)]
 pub struct LastDamageTime(pub f32);
 
@@ -49,7 +60,7 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_systems(Update, (handle_keys, apply_friction, update_bow_position, handle_mouse, smooth_camera_follow, update_health_bar_ui, regenerate_healthbar))
+            .add_systems(Update, (xp_orb_collision, move_xp_orb,update_xp_bar, handle_keys, apply_friction, update_bow_position, handle_mouse, smooth_camera_follow, update_health_bar_ui, regenerate_healthbar))
             .insert_resource(LastDamageTime(0.0));
     }
 }
@@ -152,30 +163,71 @@ pub fn spawn_player(
         }
     });
 
+    commands.spawn((
+        Node {
+            width: Val::Px(600.0),
+            height: Val::Px(30.0),
+            margin: UiRect {
+                top: Val::Px(15.0),
+                left: Val::Auto,
+                right: Val::Auto,
+                ..default()
+            },
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        BackgroundColor(Color::Srgba(YELLOW)),
+        XPBar {
+            level: 0,
+            current: 0.0
+        }
+    ))
+    .with_children(|parent| {
+        parent.spawn((
+            Text::new("0"),
+            Node {
+                top: Val::Px(50.0),
+                height: Val::Px(100.0),
+                ..default()
+            },
+            TextFont {
+                font: assets.load("Kenneymini.ttf"),
+                font_size: 60.0,
+                ..default()
+            }
+
+        ));
+    });
+
 }
 
 fn update_health_bar_ui(
     segments_query: Query<(&HealthBarSegment, Entity)>,
-    mut nodes_query: Query<(&mut Node, &mut BackgroundColor), With<HealthBarSegment>>,
-    player_query: Query<&PlayerHealth>
+    mut nodes_query: Query<(&mut Node, &mut BackgroundColor, Entity), With<HealthBarSegment>>,
+    mut player_query: Query<&mut PlayerHealth>,
+    mut commands: Commands
 ) {
     let segments_map: HashMap<usize, Entity> = segments_query
         .iter()
         .map(|(segment, entity)| (segment.index, entity))
         .collect();
 
-    let player = player_query.single().unwrap();
+    let mut player = player_query.single_mut().unwrap();
 
     let current_segment = f32::floor(player.current / player.per_segment as f32) as i32;
+    if current_segment + 1 < player.num_segments {
 
-    for i in 0..player.num_segments {
-        let (mut node, mut color) = nodes_query.get_mut(segments_map.get(&(i as usize)).unwrap().clone()).unwrap();
-        color.0 = Color::Srgba(DARK_GRAY);
-        node.width = Val::Px(100.0);
+        for i in (current_segment + 1)..player.num_segments {
+            let (_, _, ent) = nodes_query.get_mut(segments_map.get(&(i as usize)).unwrap().clone()).unwrap();
+
+            
+            commands.entity(ent).despawn();
+            player.num_segments -= 1;
+        }
     }
 
     for i in 0..(current_segment) {
-        let (mut current_node, mut color) = nodes_query.get_mut(segments_map.get(&(i as usize)).unwrap().clone()).unwrap();
+        let (mut current_node, mut color, _) = nodes_query.get_mut(segments_map.get(&(i as usize)).unwrap().clone()).unwrap();
 
         current_node.width = Val::Px(100.0);
         color.0 = Color::Srgba(RED);
@@ -185,7 +237,7 @@ fn update_health_bar_ui(
         return;
     }
 
-    let (mut last_node, mut last_color) = nodes_query.get_mut(segments_map.get(&((current_segment) as usize)).unwrap().clone()).unwrap();
+    let (mut last_node, mut last_color, _) = nodes_query.get_mut(segments_map.get(&((current_segment) as usize)).unwrap().clone()).unwrap();
 
     last_node.width = Val::Px(100.0 * ((player.current - current_segment as f32 * player.per_segment as f32) / player.per_segment as f32));
     last_color.0 = Color::Srgba(RED);
@@ -239,7 +291,8 @@ fn handle_mouse(
     assets: Res<AssetServer>,
     player_query: Query<&Transform, (With<Player>, Without<Bow>)>,
     mut cooldown: Local<f32>,
-    time: Res<Time>
+    time: Res<Time>,
+    particle_handles: Res<ParticleHandles>
 ) {
     let window = windows.single().unwrap();
     let player = player_query.single().unwrap();
@@ -267,7 +320,9 @@ fn handle_mouse(
                     Velocity {
                         dx: ARROW_SPEED * f32::cos(alpha),
                         dy: ARROW_SPEED * f32::sin(alpha)
-                    }
+                    },
+                    ParticleEffect::new(particle_handles.arrow_trail.clone()),
+
                 ));
 
                 *cooldown = 0.0;
@@ -280,7 +335,7 @@ fn handle_mouse(
 fn smooth_camera_follow(
     time: Res<Time>,
     player_query: Query<&Transform, With<Player>>,
-    mut camera_query: Query<&mut Transform, (With<Camera>, Without<Player>)>,
+    mut camera_query: Query<&mut Transform, (With<Name>, Without<Player>)>,
 ) {
     if let Ok(player_transform) = player_query.single() {
         if let Ok(mut camera_transform) = camera_query.single_mut() {
@@ -299,6 +354,65 @@ fn smooth_camera_follow(
 
             
             camera_transform.translation = current.lerp(target, time.delta_secs() * smoothness);
+        }
+    }
+}
+
+fn update_xp_bar(
+    mut xp_query: Query<(&mut XPBar, &mut Node, &Children)>,
+    mut text_query: Query<&mut Text>
+) {
+    let (mut xp_bar, mut node, children) = xp_query.single_mut().unwrap();
+    let per_level = (f32::exp2(xp_bar.level as f32) * 50.);
+    if xp_bar.current > per_level {
+        xp_bar.level += 1;
+        xp_bar.current = 0.;
+    }
+
+    for &child in children {
+        if let Ok(mut text) = text_query.get_mut(child) {
+            text.0 = xp_bar.level.to_string();
+        }
+    }
+
+    node.width = Val::Px(600. * (xp_bar.current / per_level));
+
+
+}
+
+fn move_xp_orb(
+    xp_orb_query: Query<&mut Transform, (With<XPOrb>, Without<Player>)>,
+    player_query: Query<&Transform, With<Player>>,
+    time: Res<Time>
+) {
+    let player = player_query.single().unwrap();
+    for mut orb in xp_orb_query {
+        let d = player.translation.truncate().distance(orb.translation.truncate());
+
+        let dir = (player.translation.truncate() - orb.translation.truncate()).normalize();
+        let min_force = 50.0;
+        let force_magnitude = (G / (d.powf(1.2))).max(min_force);
+
+        let vel = dir * force_magnitude * time.delta_secs();
+        orb.translation.x += vel.x;
+        orb.translation.y += vel.y;
+    }
+}
+
+fn xp_orb_collision(
+    player_query: Query<(&Transform, &CircleCollider), With<Player>>,
+    orb_query: Query<(&Transform, Entity, &XPOrb)>,
+    mut xp_bar_query: Query<&mut XPBar>,
+    mut commands: Commands
+) {
+    let (tr, collider) = player_query.single().unwrap();
+    let mut xp_bar = xp_bar_query.single_mut().unwrap();
+
+    for (orb_tr, ent, orb) in orb_query {
+        if orb_tr.translation.truncate().distance(tr.translation.truncate()) < collider.0 {
+            commands.entity(ent).despawn();
+            
+            xp_bar.current += orb.0;
         }
     }
 }

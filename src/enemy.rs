@@ -1,7 +1,9 @@
 use bevy::prelude::*;
+use bevy_hanabi::ParticleEffect;
+use rand::Rng;
 
 
-use crate::{global::{CircleCollider, Velocity}, player::{Arrow, LastDamageTime, Player, PlayerHealth}, world::EnemiesCounter};
+use crate::{global::{CircleCollider, ScreenShake, Velocity}, particles::ParticleHandles, player::{Arrow, LastDamageTime, Player, PlayerHealth, XPOrb}, world::EnemiesCounter, GLOW_FACTOR};
 
 
 const ENEMY_SPEED: f32 = 1.0;
@@ -64,7 +66,12 @@ fn handle_enemy_damage(
     mut enemy_query: Query<(&Transform, &CircleCollider, Entity, &mut HP), With<Enemy>>,
     arrow_query: Query<(&Transform, Entity), With<Arrow>>,
     health_bar_query: Query<(Entity, &HealthBarOwner), With<HealthBar>>,
-    mut enemies: ResMut<EnemiesCounter>
+    mut enemies: ResMut<EnemiesCounter>,
+    mut shake: ResMut<ScreenShake>,
+    particle_handles: Res<ParticleHandles>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>
+
 ) {
     for (enemy_tf, collider, enemy_ent, mut hp) in &mut enemy_query {
         let enemy_pos = enemy_tf.translation.truncate();
@@ -78,6 +85,11 @@ fn handle_enemy_damage(
 
                 hp.current -= 1;
                 commands.entity(arrow_ent).despawn();
+                shake.trauma = 1.0;
+                commands.spawn((
+                    ParticleEffect::new(particle_handles.enemy_damage.clone()),
+                    Transform::from_translation(arrow_pos.extend(0.0))
+                ));
 
                 if hp.current <= 0 {
                     for (bar_ent, owner) in &health_bar_query {
@@ -87,7 +99,24 @@ fn handle_enemy_damage(
                     }
 
                     commands.entity(enemy_ent).despawn();
+                    shake.trauma = 4.0;
                     enemies.0 -= 1;
+
+                    commands.spawn((
+                        ParticleEffect::new(particle_handles.enemy_death.clone()),
+                        Transform::from_translation(enemy_tf.translation),
+                    ));
+
+                    spawn_orbs(
+                        &mut commands,
+                        5.,
+                        enemy_tf.translation,
+                        &particle_handles,
+                        &mut meshes,
+                        &mut materials
+                    );
+
+                    
                 }
             }
         }
@@ -164,7 +193,9 @@ fn handle_collision(
     mut commands: Commands,
     mut counter: ResMut<EnemiesCounter>,
     mut last_damage: ResMut<LastDamageTime>,
-    time: Res<Time>
+    time: Res<Time>,
+    mut shake: ResMut<ScreenShake>,
+    particle_handles: Res<ParticleHandles>
 ) {
     let (mut health, player_collider, player_tr) = player_query.single_mut().unwrap();
     for (enemy_collider, enemy_tr, enemy, entity) in enemy_query {
@@ -180,9 +211,52 @@ fn handle_collision(
                     }
                     counter.0 -= 1;
                     last_damage.0 = time.elapsed_secs();
+                    shake.trauma = 2.0;
+                    commands.spawn((
+                        ParticleEffect::new(particle_handles.enemy_damage.clone()),
+                        Transform::from_translation(enemy_tr.translation),
+                    ));
                 }
                 _ => ()
             }
         }
     }
+}
+
+fn spawn_orbs(
+    commands: &mut Commands,
+    sum: f64,
+    translation: Vec3,
+    particle_handles: &Res<ParticleHandles>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>
+) {
+    let mut rng = rand::rng();
+    for size in losowe_sumujace_sie_do_x(4, sum) {
+        commands.spawn((
+            XPOrb(size as f32),
+            Transform::from_translation(translation + Vec3::new(rng.random_range(-30.0..30.0), rng.random_range(-30.0..30.0), 0.)),
+            Mesh2d(meshes.add(Circle::new(rng.random_range(0.5..2.3)))),
+            MeshMaterial2d(materials.add(ColorMaterial::from_color(Color::linear_rgb(GLOW_FACTOR, GLOW_FACTOR, 0.)))),
+            ParticleEffect::new(particle_handles.xp_trail.clone())
+        ));
+    }
+    
+}
+
+fn losowe_sumujace_sie_do_x(n: usize, x: f64) -> Vec<f64> {
+    let mut rng = rand::rng();
+
+    // Wygeneruj n losowych liczb
+    let mut liczby: Vec<f64> = (0..n).map(|_| rng.random::<f64>()).collect();
+
+    // Policz sumę
+    let suma: f64 = liczby.iter().sum();
+
+    // Przeskaluj, żeby suma wynosiła dokładnie x
+    for i in 0..n {
+        liczby[i] = liczby[i] / suma * x;
+    }
+
+    liczby
 }
