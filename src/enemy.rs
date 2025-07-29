@@ -1,24 +1,25 @@
 use bevy::prelude::*;
 use bevy_hanabi::ParticleEffect;
-use rand::Rng;
+use bevy_rapier2d::prelude::*;
 
 
-use crate::{global::{CircleCollider, ScreenShake, Velocity}, particles::ParticleHandles, player::{Arrow, LastDamageTime, Player, PlayerHealth, XPOrb}, world::EnemiesCounter, GLOW_FACTOR};
+use crate::{arrow::Arrow, global::{CircleCollider, ScreenShake}, particles::ParticleHandles, player::{Player, PlayerHealth}, ui::LastDamageTime, world::EnemiesCounter, xp::spawn_orbs, AppState};
+use crate::sfx::SFX;
 
-
-const ENEMY_SPEED: f32 = 1.0;
+const ENEMY_SPEED: f32 = 50.0;
 const ENEMY_DAMAGE: i32 = 1;
 
 #[derive(Component)]
 #[require(Velocity, Mesh2d, MeshMaterial2d<ColorMaterial>, HP, CircleCollider)]
 pub struct Enemy {
-    pub sides: i32
+    pub sides: i32,
 }
+
 
 #[derive(Component, Default)]
 pub struct HP {
-    pub current: i32,
-    pub max: i32
+    pub current: f32,
+    pub max: f32,
 }
 
 #[derive(Component, Default)]
@@ -32,7 +33,7 @@ pub struct EnemyPlugin;
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_systems(Update, (update_health_bars, update_health_bar_position, handle_enemy_damage, handle_ai, handle_collision));
+            .add_systems(Update, (update_health_bars, update_health_bar_position, handle_ai, handle_collision, collision_events_system).run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -42,7 +43,7 @@ fn update_health_bars(
 ) {
     for (mut bar_transform, owner) in &mut bar_query {
         if let Ok((hp, _)) = health_query.get(owner.0) {
-            let health_percent: f32 = hp.current.max(0) as f32 / hp.max.max(1) as f32;
+            let health_percent: f32 = hp.current.max(0.) as f32 / hp.max.max(1.) as f32;
             bar_transform.scale.x = health_percent.clamp(0.0, 1.0);
         }
     }
@@ -61,89 +62,133 @@ fn update_health_bar_position(
     }
 }
 
-fn handle_enemy_damage(
-    mut commands: Commands,
-    mut enemy_query: Query<(&Transform, &CircleCollider, Entity, &mut HP), With<Enemy>>,
-    arrow_query: Query<(&Transform, Entity), With<Arrow>>,
+fn collision_events_system(
+    mut collision_events: EventReader<CollisionEvent>,
+    mut enemy_query: Query<(Entity, &mut HP, &mut Velocity, &Transform), With<Enemy>>,
+    mut arrow_query: Query<(Entity, &Velocity, &Arrow, &Transform), Without<Enemy>>,
     health_bar_query: Query<(Entity, &HealthBarOwner), With<HealthBar>>,
-    mut enemies: ResMut<EnemiesCounter>,
+    mut commands: Commands,
     mut shake: ResMut<ScreenShake>,
     particle_handles: Res<ParticleHandles>,
+    mut enemies: ResMut<EnemiesCounter>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>
-
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    sfx: Res<SFX>,
 ) {
-    for (enemy_tf, collider, enemy_ent, mut hp) in &mut enemy_query {
-        let enemy_pos = enemy_tf.translation.truncate();
-        let radius = collider.0 * enemy_tf.scale.x.max(enemy_tf.scale.y);
-
-        for (arrow_tf, arrow_ent) in &arrow_query {
-            let arrow_pos = arrow_tf.translation.truncate();
-
-            let dist = enemy_pos.distance(arrow_pos);
-            if dist <= radius {
-
-                hp.current -= 1;
-                commands.entity(arrow_ent).despawn();
-                shake.trauma = 1.0;
-                commands.spawn((
-                    ParticleEffect::new(particle_handles.enemy_damage.clone()),
-                    Transform::from_translation(arrow_pos.extend(0.0))
-                ));
-
-                if hp.current <= 0 {
-                    for (bar_ent, owner) in &health_bar_query {
-                        if owner.0 == enemy_ent {
-                            commands.entity(bar_ent).despawn();
-                        }
+    for collision in collision_events.read() {
+        match collision {
+            CollisionEvent::Started(e1, e2, _) => {
+                if let Ok(mut enemy) = enemy_query.get_mut(e1.entity()) {
+                    if let Ok(mut arrow) = arrow_query.get_mut(e2.entity()) {
+                        handle_enemy_damage(
+                            &mut commands,
+                            &mut enemy,
+                            &mut arrow,
+                            health_bar_query,
+                            &mut enemies,
+                            &mut shake,
+                            &particle_handles,
+                            &mut meshes,
+                            &mut materials,
+                            &sfx,
+                        );
                     }
-
-                    commands.entity(enemy_ent).despawn();
-                    shake.trauma = 4.0;
-                    enemies.0 -= 1;
-
-                    commands.spawn((
-                        ParticleEffect::new(particle_handles.enemy_death.clone()),
-                        Transform::from_translation(enemy_tf.translation),
-                    ));
-
-                    spawn_orbs(
-                        &mut commands,
-                        5.,
-                        enemy_tf.translation,
-                        &particle_handles,
-                        &mut meshes,
-                        &mut materials
-                    );
-
-                    
+                }
+                if let Ok(mut enemy) = enemy_query.get_mut(e2.entity()) {
+                    if let Ok(mut arrow) = arrow_query.get_mut(e1.entity()) {
+                        handle_enemy_damage(
+                            &mut commands,
+                            &mut enemy,
+                            &mut arrow,
+                            health_bar_query,
+                            &mut enemies,
+                            &mut shake,
+                            &particle_handles,
+                            &mut meshes,
+                            &mut materials,
+                            &sfx,
+                        );
+                    }
                 }
             }
+            _ => ()
         }
     }
 }
 
-fn handle_ai(
-    enemy_query: Query<(& Transform, &mut Velocity, &Enemy), Without<Player>>,
-    player_query: Query<(&Transform, &Velocity), (With<Player>, Without<Enemy>)>
+fn handle_enemy_damage(
+    mut commands: &mut Commands,
+    enemy: &mut (Entity, Mut<HP>, Mut<Velocity>, &Transform),
+    arrow: &(Entity, &Velocity, &Arrow, &Transform),
+    health_bar_query: Query<(Entity, &HealthBarOwner), With<HealthBar>>,
+    enemies: &mut ResMut<EnemiesCounter>,
+    shake: &mut ResMut<ScreenShake>,
+    particle_handles: &Res<ParticleHandles>,
+    mut meshes: &mut ResMut<Assets<Mesh>>,
+    mut materials: &mut ResMut<Assets<ColorMaterial>>,
+    sfx: &Res<SFX>,
 ) {
-    let player  = player_query.single().unwrap();
+    enemy.1.current -= arrow.2.damage;
+    commands.entity(arrow.0).despawn();
+    shake.trauma = 1.0;
+    commands.spawn((
+        ParticleEffect::new(particle_handles.enemy_damage.clone()),
+        Transform::from_translation(arrow.3.translation)
+    ));
+    commands.spawn(AudioPlayer(sfx.hurt.clone()));
+    enemy.2.linvel.x += arrow.1.linvel.x;
+    enemy.2.linvel.y += arrow.1.linvel.y;
+
+    if enemy.1.current <= 0. {
+        for (bar_ent, owner) in &health_bar_query {
+            if owner.0 == enemy.0 {
+                commands.entity(bar_ent).despawn();
+            }
+        }
+
+        commands.entity(enemy.0).despawn();
+        shake.trauma = 4.0;
+        enemies.0 -= 1;
+
+        commands.spawn((
+            ParticleEffect::new(particle_handles.enemy_death.clone()),
+            Transform::from_translation(enemy.3.translation),
+        ));
+
+        spawn_orbs(
+            &mut commands,
+            5.,
+            enemy.3.translation,
+            &particle_handles,
+            &mut meshes,
+            &mut materials,
+        );
+    }
+}
+
+
+
+
+fn handle_ai(
+    enemy_query: Query<(&Transform, &mut Velocity, &Enemy), Without<Player>>,
+    player_query: Query<(&Transform, &Velocity), (With<Player>, Without<Enemy>)>,
+) {
+    let player = player_query.single().unwrap();
     for (enemy_tr, mut vel, enemy) in enemy_query {
         match enemy.sides {
             3 => {
                 let player_tr = player.0;
 
-                let angle = (player_tr.translation.y - enemy_tr.translation.y).atan2(player_tr.translation.x - enemy_tr.translation.x);
-                vel.dx = angle.cos() * ENEMY_SPEED;
-                vel.dy = angle.sin() * ENEMY_SPEED;
+                let d = (player_tr.translation - enemy_tr.translation).truncate().normalize();
+                vel.linvel = vel.linvel.lerp(d * ENEMY_SPEED, 0.1);
             }
             4 => {
                 let player_tr = player.0;
-                if let Some(d) = calculate_intercept_direction(enemy_tr.translation.truncate(), player_tr.translation.truncate(), Vec2::new(player.1.dx, player.1.dy), ENEMY_SPEED) {
-                    vel.dx = d.x * ENEMY_SPEED;
-                    vel.dy = d.y * ENEMY_SPEED;
+                if let Some(d) = calculate_intercept_direction(enemy_tr.translation.truncate(), player_tr.translation.truncate(), Vec2::new(player.1.linvel.x, player.1.linvel.y), ENEMY_SPEED) {
+                    vel.linvel = vel.linvel.lerp(d * ENEMY_SPEED, 0.1);
+                } else {
+                    vel.linvel = vel.linvel.lerp((-enemy_tr.translation + player_tr.translation).truncate().normalize() * ENEMY_SPEED, 0.1);
                 }
-                
             }
             _ => ()
         }
@@ -157,33 +202,26 @@ fn calculate_intercept_direction(
     projectile_speed: f32,
 ) -> Option<Vec2> {
     let to_target = target_pos - shooter_pos;
-
     let a = target_vel.length_squared() - projectile_speed * projectile_speed;
     let b = 2.0 * to_target.dot(target_vel);
     let c = to_target.length_squared();
-
-    let discriminant = b * b - 4.0 * a * c;
-
-    if discriminant < 0.0 {
-        
-        return None;
-    }
-
-    let sqrt_disc = discriminant.sqrt();
-    let t1 = (-b - sqrt_disc) / (2.0 * a);
-    let t2 = (-b + sqrt_disc) / (2.0 * a);
-
-    let t = if t1 > 0.0 {
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 { return None; }
+    let sqrt = disc.sqrt();
+    let t1 = (-b - sqrt) / (2.0 * a);
+    let t2 = (-b + sqrt) / (2.0 * a);
+    let t = if t1 > 0.0 && t2 > 0.0 {
+        t1.min(t2)
+    } else if t1 > 0.0 {
         t1
     } else if t2 > 0.0 {
         t2
     } else {
-        return None; 
+        return None;
     };
 
-    let aim_point = target_pos + target_vel * t;
-    let direction = (aim_point - shooter_pos).normalize();
-    Some(direction)
+    let aim = target_pos + target_vel * t;
+    Some((aim - shooter_pos).normalize())
 }
 
 fn handle_collision(
@@ -195,7 +233,7 @@ fn handle_collision(
     mut last_damage: ResMut<LastDamageTime>,
     time: Res<Time>,
     mut shake: ResMut<ScreenShake>,
-    particle_handles: Res<ParticleHandles>
+    particle_handles: Res<ParticleHandles>,
 ) {
     let (mut health, player_collider, player_tr) = player_query.single_mut().unwrap();
     for (enemy_collider, enemy_tr, enemy, entity) in enemy_query {
@@ -221,42 +259,4 @@ fn handle_collision(
             }
         }
     }
-}
-
-fn spawn_orbs(
-    commands: &mut Commands,
-    sum: f64,
-    translation: Vec3,
-    particle_handles: &Res<ParticleHandles>,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<ColorMaterial>>
-) {
-    let mut rng = rand::rng();
-    for size in losowe_sumujace_sie_do_x(4, sum) {
-        commands.spawn((
-            XPOrb(size as f32),
-            Transform::from_translation(translation + Vec3::new(rng.random_range(-30.0..30.0), rng.random_range(-30.0..30.0), 0.)),
-            Mesh2d(meshes.add(Circle::new(rng.random_range(0.5..2.3)))),
-            MeshMaterial2d(materials.add(ColorMaterial::from_color(Color::linear_rgb(GLOW_FACTOR, GLOW_FACTOR, 0.)))),
-            ParticleEffect::new(particle_handles.xp_trail.clone())
-        ));
-    }
-    
-}
-
-fn losowe_sumujace_sie_do_x(n: usize, x: f64) -> Vec<f64> {
-    let mut rng = rand::rng();
-
-    // Wygeneruj n losowych liczb
-    let mut liczby: Vec<f64> = (0..n).map(|_| rng.random::<f64>()).collect();
-
-    // Policz sumę
-    let suma: f64 = liczby.iter().sum();
-
-    // Przeskaluj, żeby suma wynosiła dokładnie x
-    for i in 0..n {
-        liczby[i] = liczby[i] / suma * x;
-    }
-
-    liczby
 }
