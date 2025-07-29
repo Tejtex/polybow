@@ -1,22 +1,16 @@
-use std::f32::consts::PI;
-
+use bevy::color::Color::Srgba;
 use bevy::prelude::*;
+use bevy::prelude::Color::LinearRgba;
 use rand::Rng;
 
-use crate::{enemy::{Enemy, HealthBar}, player::{Player, PreviousPosition}, GLOW_FACTOR};
 
-const ROTATION_SPEED: f32 = 120.0;
+use crate::{player::{Player, PreviousPosition}, AppState, GLOW_FACTOR};
+
 const TRAUMA_FALLOFF_SPEED: f32 = 6.0;
 
 pub(crate) const ENEMY_COLOR: Color = Color::linear_rgb(245.0 / 255.0 * GLOW_FACTOR, 59.0 / 255.0 * GLOW_FACTOR, 93.0 / 255.0 * GLOW_FACTOR);
 pub(crate) const PLAYER_COLOR: Color = Color::linear_rgb(5.0 / 255.0 * GLOW_FACTOR, 157.0 / 255.0 * GLOW_FACTOR, 240.0 / 255.0 * GLOW_FACTOR);
 
-#[derive(Component, Default)]
-#[require(Transform)]
-pub struct Velocity {
-    pub dx: f32,
-    pub dy: f32
-}
 
 #[derive(Component, Default)]
 pub struct CircleCollider(pub f32);
@@ -26,7 +20,7 @@ pub struct GlobalPlugin;
 impl Plugin for GlobalPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_systems(Update, (update_transform_system, rotate_player_enemy, fade_trail.after(spawn_trail),spawn_trail, apply_screen_shake))
+            .add_systems(Update, (fade_trail.after(spawn_trail),spawn_trail, apply_screen_shake).run_if(in_state(AppState::InGame)))
             .insert_resource(ScreenShake::default());
     }
 }
@@ -40,24 +34,6 @@ impl Default for ScreenShake {
     fn default() -> Self {
         ScreenShake { trauma: 0.0 }
     }
-}
-
-fn update_transform_system(query: Query<(&Velocity, &mut Transform)>) {
-    for (vel, mut pos) in query {
-        pos.translation.x += vel.dx;
-        pos.translation.y += vel.dy;
-    }
-}
-
-fn rotate_player_enemy(
-    query: Query<&mut Transform, (Or<(With<Player>, With<Enemy>)>, Without<HealthBar>)>,
-    time: Res<Time>
-) {
-    for mut actor in query {
-        actor.rotate_z(ROTATION_SPEED * time.delta_secs() * PI / 180.0);
-        
-    }
-
 }
 
 #[derive(Component)]
@@ -159,3 +135,43 @@ fn apply_screen_shake(
         }
     }
 }
+
+pub fn regular_polygon_vertices(radius: f32, sides: usize) -> Vec<Vec2> {
+    (0..sides)
+        .map(|i| {
+            let angle = i as f32 / sides as f32 * std::f32::consts::TAU;
+            Vec2::new(-radius * angle.sin(),radius * angle.cos())
+        })
+        .collect()
+}
+
+pub fn adjusted_glow(color: Color, base_glow: f32) -> Color {
+    let srgb = color.to_srgba();
+    let r = srgb.red;
+    let g = srgb.green;
+    let b = srgb.blue;
+    let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let correction = (1.0 / luminance.clamp(0.2, 1.0));
+    let glow_factor = base_glow * correction;
+    Color::linear_rgba(r * glow_factor, g * glow_factor, b * glow_factor, srgb.alpha)
+}
+pub trait UnwrapOrLogDefault<T> {
+    fn unwrap_or_default_with_log(self, msg: &str) -> T;
+}
+
+impl<T, E: std::fmt::Debug> UnwrapOrLogDefault<T> for Result<T, E>
+where
+    T: Default,
+{
+    pub fn unwrap_or_default_with_log(self, msg: &str) -> T {
+        match self {
+            Ok(val) => val,
+            Err(e) => {
+                error!("{}: {:?}", msg, e);
+                T::default()
+            }
+        }
+    }
+}
+
+
