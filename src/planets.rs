@@ -2,6 +2,7 @@ use std::ops::DerefMut;
 use bevy::prelude::*;
 use bevy_hanabi::ParticleEffect;
 use bevy_rapier2d::prelude::*;
+use rand::Rng;
 use crate::AppState;
 use crate::arrow::Arrow;
 use crate::global::ScreenShake;
@@ -14,7 +15,6 @@ pub struct Planet {
     pub color: Color,
     pub effect: Effect,
     pub hp: f32,
-    pub max_hp: f32
 }
 
 #[derive(Default, Clone, PartialEq, Eq, Hash)]
@@ -90,9 +90,11 @@ fn collision(
         Transform::from_translation(arrow_pos.extend(0.0))
     ));
     commands.spawn(AudioPlayer(sfx.hurt.clone()));
+    
+    let mut rng = rand::rng();
 
     if planet.hp <= 0.0 {
         commands.entity(*planet_ent).despawn();
-        inventory.crystals.push(Crystal { color: ColorId::from_bevy(&planet.color.clone(), true).unwrap(), effect: planet.effect.clone()});
+        inventory.crystals.push(Crystal { color: ColorId::from_bevy(&planet.color.clone(), true).unwrap(), effect: planet.effect.clone(), phase: rng.random(), resonance: rng.random()});
     }
 }

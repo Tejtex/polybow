@@ -17,6 +17,7 @@ use bevy::{
 use bevy_hanabi::ParticleEffect;
 use bevy_rapier2d::prelude::*;
 use std::collections::HashSet;
+use rand::Rng;
 
 const PLAYER_SPEED: f32 = 200.0;
 const KNOCKBACK: f32 = 20.0;
@@ -69,13 +70,71 @@ impl Inventory {
         self.crystals.remove(index);
     }
 
-    pub fn combine(&self, a: usize, b: usize) {}
+    pub fn combine(&mut self, a: usize, b: usize) {
+        if a >= self.crystals.len()  {
+            warn!("Index out of bounds: {}", a);
+            return;
+        }
+        if b >= self.crystals.len() {
+            warn!("Index out of bounds: {}", b);
+            return;
+        }
+
+        let mut rng = rand::rng();
+
+        let crystal1 = &self.crystals[b];
+        let crystal2 = &self.crystals[a];
+
+        let alignment = ((crystal1.phase - crystal2.phase).abs().powf(3.) + (crystal1.resonance - crystal2.resonance).abs().powf(3.)) / 2.;
+
+        let avrg_level = (crystal1.effect.level + crystal2.effect.level)  as f32 / 2.;
+
+        let level = (avrg_level * (1. - alignment) * 2.) as i32;
+
+        let effect_type = if rng.random::<bool>() { &crystal1.effect.effect_type } else { &crystal2.effect.effect_type };
+
+        let phase = self.bounded_random_around((crystal1.phase - crystal2.phase) / 2., alignment, 0.5, &mut rng);
+        let resonance = self.bounded_random_around((crystal1.resonance - crystal2.resonance) / 2., alignment, 0.5, &mut rng);
+
+        let r = ((( crystal1.color.r as i32 + crystal2.color.r as i32) % 255 / 2)) as u8;
+        let g = ((( crystal1.color.g as i32 + crystal2.color.g as i32) % 255 / 2)) as u8;
+        let blue = ((( crystal1.color.b as i32 + crystal2.color.b as i32) % 255 / 2)) as u8;
+        let color = ColorId::new(r, g, blue);
+
+        let new_crystal = Crystal {
+            effect: Effect {
+                level,
+                effect_type: effect_type.clone()
+            },
+            phase,
+            resonance,
+            color
+        };
+        if a > b {
+            self.crystals.remove(a);
+            self.crystals[b] = new_crystal;
+        } else {
+            self.crystals.remove(b);
+            self.crystals[a] = new_crystal;
+        }
+
+
+    }
+    fn bounded_random_around(&self, avg: f32, alignment: f32, range: f32, rng: &mut impl Rng) -> f32 {
+        let spread = range * alignment;
+        let min = (avg - spread).clamp(0.0, 1.0);
+        let max = (avg + spread).clamp(0.0, 1.0);
+        rng.random_range(min..=max)
+    }
+
 }
 
-#[derive(Default, PartialEq, Hash, Eq)]
+#[derive(Default, PartialEq)]
 pub struct Crystal {
     pub color: ColorId,
     pub effect: Effect,
+    pub phase: f32,
+    pub resonance: f32
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
@@ -124,6 +183,10 @@ impl ColorId {
             None // nie da się dokładnie przeliczyć np. z Hsla
         }
     }
+}
+
+struct ActiveEffects {
+    pub effects: Vec<Effect>,
 }
 
 pub struct PlayerPlugin;

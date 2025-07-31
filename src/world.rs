@@ -181,8 +181,7 @@ fn spawn_planets(
             Planet {
                 color,
                 effect: Effect { effect_type: EffectType::Poison, level: 2 },
-                hp: 1.,
-                max_hp: 10.
+                hp: rng.random_range(1.0..12.0),
             },
             Mesh2d(meshes.add(mesh)),
             MeshMaterial2d(materials.add(ColorMaterial::from_color(color))),

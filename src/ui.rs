@@ -1,18 +1,25 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use crate::player::{Crystal, Inventory, PlayerHealth};
-use crate::sfx::SFX;
 use crate::AppState;
 use crate::global::UnwrapOrLogDefault;
+use crate::player::{Crystal, Inventory, PlayerHealth};
+use crate::sfx::SFX;
 
-use bevy::color::palettes::css::WHITE;
-use bevy::window::PrimaryWindow;
+use bevy::color::palettes::css::{BLACK, WHITE};
+use bevy::window::{PrimaryMonitor, PrimaryWindow};
 use bevy::{color::palettes::css::RED, prelude::*};
 
+use bevy::color::palettes::basic::YELLOW;
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::picking::hover::HoverMap;
+use bevy::text::cosmic_text::ttf_parser::Weight::Black;
+use csv::Reader;
 use rand::Rng;
 use std::error::Error;
 use std::fs::File;
-use csv::Reader;
+
+const SCROLL_SPEED: f32 = 20.0;
 
 fn read_color_names(path: &str) -> Result<Vec<ColorEntry>, Box<dyn Error>> {
     let file = File::open(path)?;
@@ -43,15 +50,13 @@ fn rgb_distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 }
 fn closest_color<'a>(
     input: &bevy::prelude::Color,
-    list: &'a [ColorEntry]
+    list: &'a [ColorEntry],
 ) -> Option<&'a ColorEntry> {
     let color = input.to_srgba();
     let input_rgb = [color.red, color.green, color.blue];
 
     list.iter()
-        .filter_map(|entry| {
-            hex_to_rgb(&entry.hex).map(|c| (entry, c))
-        })
+        .filter_map(|entry| hex_to_rgb(&entry.hex).map(|c| (entry, c)))
         .min_by(|(_, c1), (_, c2)| {
             rgb_distance(input_rgb, *c1)
                 .partial_cmp(&rgb_distance(input_rgb, *c2))
@@ -59,7 +64,6 @@ fn closest_color<'a>(
         })
         .map(|(entry, _)| entry)
 }
-
 
 const REGENERATE_SPEED: f32 = 1.0;
 const REGENERATE_COOLDOWN: f32 = 3.0;
@@ -74,13 +78,14 @@ struct ColorEntry {
     good_name: Option<String>, // albo String jeśli zawsze coś tam jest
 }
 
+#[derive(Resource)]
+pub struct ScrollOffsetResource(f32);
 
 #[derive(Component)]
 pub struct TooltipNode;
 
 #[derive(Component)]
 pub struct TooltipText;
-
 
 #[derive(Component)]
 pub struct HealthBarSegment {
@@ -136,22 +141,25 @@ impl Plugin for UIPlugin {
                 handle_crystal_clicks,
                 handle_inventory_shortcuts,
                 handle_selected_crystal,
-                update_crystal_tooltip
+                update_crystal_tooltip,
+                handle_scrolling,
+                // update_scroll_position,
+                update_inventory_slots
             )
                 .run_if(in_state(AppState::InGame)),
         )
-            .add_systems(OnEnter(AppState::InGame), load_colors)
+        .add_systems(OnEnter(AppState::InGame), load_colors)
         .insert_resource(LastDamageTime(0.0))
         .insert_resource(InventoryVisible(false))
         .insert_resource(SelectedCrystals::default())
-            .insert_resource(Colors(Vec::new()));
+        .insert_resource(Colors(Vec::new()))
+        .insert_resource(ScrollOffsetResource(0.0));
     }
 }
 
-fn load_colors(
-    mut colors: ResMut<Colors>,
-) {
-    colors.0 = read_color_names("colornames.csv").unwrap_or_default_with_log();
+fn load_colors(mut colors: ResMut<Colors>) {
+    colors.0 = read_color_names("colornames.csv")
+        .unwrap_or_default_with_log("Couldn't read color names: ");
 }
 
 fn update_health_bar_ui(
@@ -220,6 +228,32 @@ fn regenerate_healthbar(
             < (health.num_segments * health.per_segment) as f32
     {
         health.current += time.delta_secs() * REGENERATE_SPEED;
+    }
+}
+
+fn handle_scrolling(
+    mut mouse_wheel_events: EventReader<MouseWheel>,
+    mut scroll_offset: ResMut<ScrollOffsetResource>,
+    mut frame_query: Query<(&GlobalTransform), With<CrystalFrame>>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    inventory_visible: Res<InventoryVisible>,
+) {
+    if ! inventory_visible.0 {
+        return;
+    }
+    let window = window.single().unwrap();
+    for mouse_wheel_event in mouse_wheel_events.read() {
+
+        let sorted: Vec<&GlobalTransform> = frame_query.iter().sort_by::<&GlobalTransform>(|val1, val2| val1.translation().x.partial_cmp(&val2.translation().x).unwrap_or(Ordering::Equal)).collect();
+        let scrolling_left = mouse_wheel_event.y < 0.0;
+        let scrolling_right = mouse_wheel_event.y > 0.0;
+
+        let can_scroll_right = (*sorted[0]).translation().x < window.width() / 2.0;
+        let can_scroll_left = (*sorted.last().unwrap()).translation().x > window.width() / 2.0;
+
+        if (scrolling_left && can_scroll_left) || (scrolling_right && can_scroll_right) {
+            scroll_offset.0 += mouse_wheel_event.y * SCROLL_SPEED;
+        }
     }
 }
 
@@ -305,49 +339,55 @@ fn spawn_inventory_ui(
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(WHITE.into()),
+            BackgroundColor(Color::from(BLACK)),
             InventoryNode,
         ))
         .with_children(|parent| {
             parent
-                .spawn(Node {
-                    margin: UiRect::top(Val::Px(50.)),
-                    ..default()
-                })
-                .with_children(|parent2| {
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.),
+                        height: Val::Px(130.),
+                        margin: UiRect::top(Val::Px(50.)),
+                        justify_content: JustifyContent::Center,
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    BackgroundColor(Color::from(YELLOW)),
+                ))
+                .with_children(|row| {
                     let mut i = 0;
                     for crystal in &inventory.crystals {
-                        parent2
-                            .spawn((
-                                Node {
-                                    margin: UiRect::all(Val::Px(10.)),
-                                    width: Val::Px(100.),
-                                    height: Val::Px(100.),
-                                    ..default()
-                                },
-                                ImageNode {
-                                    image: frame.clone(),
-                                    ..default()
-                                },
-                                CrystalFrame,
-                            ))
-                            .with_child((
-                                Node {
-                                    width: Val::Px(60.),
-                                    height: Val::Px(60.),
-                                    margin: UiRect::AUTO,
-                                    ..default()
-                                },
-                                ImageNode {
-                                    image: crystals[rng.random_range(0..crystals.len())].clone(),
-                                    image_mode: NodeImageMode::Stretch,
-                                    color: crystal.color.to_bevy(),
-                                    ..default()
-                                },
-                                CrystalSlot { index: i },
-                                BackgroundColor(WHITE.into()),
-                                Button,
-                            ));
+                        row.spawn((
+                            Node {
+                                width: Val::Px(100.),
+                                height: Val::Px(100.),
+                                flex_shrink: 0.,
+                                ..default()
+                            },
+                            ImageNode {
+                                image: frame.clone(),
+                                ..default()
+                            },
+                            CrystalFrame,
+                        ))
+                        .with_child((
+                            Node {
+                                width: Val::Px(60.),
+                                height: Val::Px(60.),
+                                margin: UiRect::AUTO,
+                                ..default()
+                            },
+                            ImageNode {
+                                image: crystals[rng.random_range(0..crystals.len())].clone(),
+                                image_mode: NodeImageMode::Stretch,
+                                color: crystal.color.to_bevy(),
+                                ..default()
+                            },
+                            CrystalSlot { index: i },
+                            BackgroundColor(WHITE.into()),
+                            Button,
+                        ));
                         i += 1;
                     }
                 });
@@ -358,7 +398,7 @@ fn spawn_inventory_ui(
                 position_type: PositionType::Absolute,
                 left: Val::Px(10.),
                 top: Val::Px(10.),
-                width: Val::Px(150.),
+                width: Val::Px(200.),
                 height: Val::Auto,
                 ..default()
             },
@@ -366,7 +406,7 @@ fn spawn_inventory_ui(
             BackgroundColor(Color::linear_rgba(0.0, 0.0, 0.0, 0.7).into()),
             TooltipNode,
             Visibility::Hidden,
-            InventoryNode
+            InventoryNode,
         ))
         .with_children(|parent| {
             parent.spawn((
@@ -387,7 +427,7 @@ fn update_crystal_tooltip(
     interaction_query: Query<(&Interaction, &CrystalSlot), (Changed<Interaction>, With<Button>)>,
     inventory: Res<Inventory>,
     window: Query<&Window, With<PrimaryWindow>>,
-    colors: Res<Colors>
+    colors: Res<Colors>,
 ) {
     let window = window.single().unwrap();
     for (mut text, parent) in &mut tooltip_query {
@@ -402,8 +442,12 @@ fn update_crystal_tooltip(
                     node.top = Val::Px(position.y);
                     let color_name = closest_color(&data.color.to_bevy(), &colors.0);
                     text.0 = format!(
-                        "Level: {}\nColor: {}\nEffect: {:?}",
-                        data.effect.level, color_name.unwrap().name, data.effect.effect_type
+                        "Level: {}\nColor: {}\nEffect: {:?}\nResonance: {}%\nPhase: {}%",
+                        data.effect.level,
+                        color_name.unwrap().name,
+                        data.effect.effect_type,
+                        (data.resonance * 100.).round(),
+                        (data.phase * 100.).round()
                     );
                 }
             } else {
@@ -424,14 +468,17 @@ fn handle_crystal_clicks(
 ) {
     for (interaction, slot, mut color) in &mut interactions {
         if *interaction == Interaction::Pressed {
-            // if buttons.pressed(MouseButton::Left) {
-            //     selected.first = Some(slot.index);
-            //     *color = BackgroundColor(Color::linear_rgb(0.6, 0.6, 1.0)); // niebieska ramka
-            // }
-            if buttons.pressed(MouseButton::Right) {
-                println!("HI");
+            if selected.second == Some(slot.index) {
+                selected.second = None;
+            } else if selected.first == Some(slot.index) {
+                selected.first = None;
+            } else if selected.first == None {
+                selected.first = Some(slot.index);
+            } else if selected.second == None {
                 selected.second = Some(slot.index);
-                *color = BackgroundColor(Color::linear_rgb(1.0, 0.6, 0.6)); // czerwona ramka
+            } else {
+                selected.first = selected.second;
+                selected.second = Some(slot.index);
             }
         }
     }
@@ -456,21 +503,25 @@ fn handle_inventory_shortcuts(
     keys: Res<ButtonInput<KeyCode>>,
     mut selected: ResMut<SelectedCrystals>,
     mut frames: Query<Entity, With<CrystalFrame>>,
-    mut crystals: Query<(&CrystalSlot, &ChildOf)>,
+    mut crystals: Query<(&mut CrystalSlot, &ChildOf, &mut ImageNode)>,
     mut inventory: ResMut<Inventory>,
     sfx: Res<SFX>,
     mut commands: Commands,
     bar_query: Query<&mut XPBar>,
 ) {
-    if keys.just_pressed(KeyCode::KeyS) {
+    if keys.just_pressed(KeyCode::KeyX) {
         if let Some(index) = selected.first {
             inventory.sell(index, bar_query);
             commands.spawn(AudioPlayer(sfx.sell.clone()));
-            for (crystal, parent) in &mut crystals {
+            for (mut crystal, parent, _) in &mut crystals {
                 if Some(crystal.index) == selected.first {
                     commands
-                        .entity(frames.get(parent.parent()).unwrap_or_default_with_log(""))
+                        .entity(frames.get(parent.parent()).unwrap())
                         .despawn();
+                }
+
+                if crystal.index > selected.first.unwrap() {
+                    crystal.index -= 1;
                 }
             }
             selected.first = None;
@@ -481,20 +532,43 @@ fn handle_inventory_shortcuts(
         if let (Some(a), Some(b)) = (selected.first, selected.second) {
             inventory.combine(a, b);
             commands.spawn(AudioPlayer(sfx.combine.clone()));
-            for (crystal, parent) in &mut crystals {
+            for (mut crystal, parent, mut image) in &mut crystals {
                 if Some(crystal.index) == selected.first {
                     commands
                         .entity(frames.get(parent.parent()).unwrap())
                         .despawn();
                 }
+                
                 if Some(crystal.index) == selected.second {
-                    commands
-                        .entity(frames.get(parent.parent()).unwrap())
-                        .despawn();
+                    image.color = inventory.crystals[crystal.index].color.to_bevy();
+                }
+                
+                if crystal.index > selected.first.unwrap() {
+                    crystal.index -= 1;
                 }
             }
             selected.first = None;
             selected.second = None;
         }
+    }
+}
+
+fn update_inventory_slots(
+    mut frame_query: Query<(&mut Node, &mut Transform, &GlobalTransform), With<CrystalFrame>>,
+    crystal_query: Query<(&CrystalSlot, &ChildOf)>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    scroll_offset: Res<ScrollOffsetResource>,
+) {
+    let window = window.single().unwrap();
+    let max_distance = window.width() / 2.0;
+
+    for (slot, parent) in crystal_query {
+        let (mut node, mut transform, global) = frame_query.get_mut(parent.parent()).unwrap();
+        node.position_type = PositionType::Relative;
+        node.left = Val::Px(scroll_offset.0);
+        let distance = global.translation().x - window.width() / 2.0;
+        let scale = 1. - (distance.abs() / max_distance).powf(2.);
+
+        transform.scale = Vec3::splat(scale);
     }
 }

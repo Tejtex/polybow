@@ -163,7 +163,7 @@ impl<T, E: std::fmt::Debug> UnwrapOrLogDefault<T> for Result<T, E>
 where
     T: Default,
 {
-    pub fn unwrap_or_default_with_log(self, msg: &str) -> T {
+    fn unwrap_or_default_with_log(self, msg: &str) -> T {
         match self {
             Ok(val) => val,
             Err(e) => {
